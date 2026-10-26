@@ -15,10 +15,19 @@ export function handleConnection(socket) {
 
             if (data.type === "connect") {
 
-                if (!data.vehicleId) {
+                if (typeof data.vehicleId !== "string" || !data.vehicleId.trim()) {
                     socket.send(JSON.stringify({
                         type: "error",
                         message: "vehicleId is required"
+                    }));
+
+                    return;
+                }
+
+                if (vehicleId) {
+                    socket.send(JSON.stringify({
+                        type: "error",
+                        message: "Vehicle is already connected on this socket"
                     }));
 
                     return;
@@ -57,7 +66,8 @@ export function handleConnection(socket) {
 
             await handleMessage(
                 data,
-                socket
+                socket,
+                vehicleId
             );
 
         } catch (error) {

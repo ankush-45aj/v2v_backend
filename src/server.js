@@ -61,7 +61,8 @@ app.get("/api/config", (req, res) => {
 
     res.json({
         v2vRangeMeters: config.v2vRangeMeters,
-        telemetryIntervalMs: config.telemetryIntervalMs
+        telemetryIntervalMs: config.telemetryIntervalMs,
+        telemetryMaxAgeMs: config.telemetryMaxAgeMs
     });
 
 });
@@ -143,6 +144,8 @@ app.get("/api/vehicles", (req, res) => {
             vehicleId: vehicle.vehicleId,
             vehicleType: vehicle.vehicleType,
             position: vehicle.position,
+            accuracy: vehicle.accuracy,
+            measurementTimestamp: vehicle.measurementTimestamp,
             speed: vehicle.speed,
             heading: vehicle.heading,
             acceleration: vehicle.acceleration,
@@ -196,6 +199,8 @@ app.get(
             success: true,
             vehicleId: vehicle.vehicleId,
             position: vehicle.position,
+            accuracy: vehicle.accuracy,
+            measurementTimestamp: vehicle.measurementTimestamp,
             speed: vehicle.speed,
             heading: vehicle.heading,
             acceleration: vehicle.acceleration,

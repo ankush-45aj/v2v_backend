@@ -4,12 +4,17 @@ import { calculateDistance } from "./distance.js";
 export function getNearbyVehicles(sourceVehicle, allVehicles) {
     const nearbyVehicles = [];
 
-    if (!sourceVehicle.position) {
+    if (!sourceVehicle.position ||
+        Date.now() - sourceVehicle.measurementTimestamp > config.telemetryMaxAgeMs) {
         return nearbyVehicles;
     }
 
     for (const vehicle of allVehicles) {
         if (vehicle.vehicleId === sourceVehicle.vehicleId) {
+            continue;
+        }
+
+        if (Date.now() - vehicle.measurementTimestamp > config.telemetryMaxAgeMs) {
             continue;
         }
 

@@ -1,3 +1,5 @@
+import { isValidPosition } from "../v2v/distance.js";
+
 export function validateTelemetry(data) {
     if (!data) {
         return {
@@ -13,50 +15,74 @@ export function validateTelemetry(data) {
         };
     }
 
-    if (!data.vehicleId) {
+    if (typeof data.vehicleId !== "string" || !data.vehicleId.trim()) {
         return {
             valid: false,
             error: "vehicleId is required"
         };
     }
 
-    if (!data.position) {
+    if (!isValidPosition(data.position)) {
         return {
             valid: false,
-            error: "position is required"
+            error: "Invalid position"
         };
     }
 
-    const { latitude, longitude } = data.position;
-
-    if (
-        typeof latitude !== "number" ||
-        latitude < -90 ||
-        latitude > 90
-    ) {
+    if (data.timestamp !== undefined &&
+        (!Number.isSafeInteger(data.timestamp) || data.timestamp < 0)) {
         return {
             valid: false,
-            error: "Invalid latitude"
+            error: "timestamp must be a nonnegative epoch-millisecond integer"
         };
     }
 
-    if (
-        typeof longitude !== "number" ||
-        longitude < -180 ||
-        longitude > 180
-    ) {
+    if (data.sequence !== undefined &&
+        (!Number.isSafeInteger(data.sequence) || data.sequence < 0)) {
         return {
             valid: false,
-            error: "Invalid longitude"
+            error: "sequence must be a nonnegative integer"
+        };
+    }
+
+    if (data.accuracy !== undefined &&
+        (!Number.isFinite(data.accuracy) || data.accuracy < 0)) {
+        return {
+            valid: false,
+            error: "accuracy must be a nonnegative number"
         };
     }
 
     const speed = data.motion?.speed ?? 0;
 
-    if (typeof speed !== "number" || speed < 0) {
+    if (!Number.isFinite(speed) || speed < 0) {
         return {
             valid: false,
             error: "Invalid speed"
+        };
+    }
+
+    const heading = data.motion?.heading ?? 0;
+    if (!Number.isFinite(heading) || heading < 0 || heading >= 360) {
+        return {
+            valid: false,
+            error: "Invalid heading"
+        };
+    }
+
+    const acceleration = data.motion?.acceleration ?? 0;
+    if (!Number.isFinite(acceleration)) {
+        return {
+            valid: false,
+            error: "Invalid acceleration"
+        };
+    }
+
+    const braking = data.status?.braking ?? false;
+    if (typeof braking !== "boolean") {
+        return {
+            valid: false,
+            error: "Invalid braking status"
         };
     }
 

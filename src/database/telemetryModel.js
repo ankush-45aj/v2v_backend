@@ -18,6 +18,10 @@ const telemetrySchema = new mongoose.Schema(
 
         longitude: Number,
 
+        accuracy: Number,
+
+        sequence: Number,
+
         speed: Number,
 
         heading: Number,

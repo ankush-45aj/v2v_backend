@@ -11,6 +11,27 @@ This document describes the HTTP and WebSocket interfaces currently implemented 
 - GET and DELETE requests do not need a request body.
 - No endpoint currently requires authentication.
 
+For Flutter testing:
+
+- Android emulator: use `http://10.0.2.2:8080` and `ws://10.0.2.2:8080` to reach the development machine.
+- Physical phone: use the development machine's LAN IP (for example, `http://192.168.1.20:8080`) and ensure both devices are on a reachable network.
+- iOS simulator: `localhost` normally reaches the development machine. A physical iPhone needs the machine's LAN IP.
+- Production: use the deployed HTTPS URL for HTTP and the same host with `wss://` for WebSocket.
+- Android may block unencrypted HTTP/WebSocket traffic unless the development app's network security configuration permits cleartext traffic. Prefer HTTPS/WSS for deployed apps.
+
+Common Flutter packages are `http` for REST, `web_socket_channel` for WebSocket, and `geolocator` for location. The backend does not provide a location-permission or GPS service; Flutter must request location permission and collect the phone's readings.
+
+### Suggested Flutter flow
+
+1. Call `GET /api/health` and `GET /api/config` to check the backend and read the configured range/freshness limits.
+2. Optionally register the vehicle once with `POST /api/vehicles`. Registration is persistent; it does not create a live connection.
+3. Open the WebSocket and send the `connect` message. Wait for the `connected` response before sending telemetry.
+4. Listen to GPS updates and send `telemetry` frames on that same socket. Include GPS accuracy and the GPS measurement timestamp when available.
+5. Listen continuously for `v2v_telemetry` and `error` frames. Use the received data to update nearby vehicle markers.
+6. On reconnect, send `connect` again and resume telemetry. Live vehicle state is in-memory and is lost when the backend process restarts or the socket disconnects.
+
+The server does not acknowledge successful telemetry or event writes. A `v2v_telemetry` frame is delivered only when another connected vehicle has a fresh position within range; use REST state/history endpoints for polling or persisted history.
+
 ## HTTP API
 
 ### `GET /api/health`
@@ -51,9 +72,12 @@ Response `200`:
 ```json
 {
   "v2vRangeMeters": 1000,
-  "telemetryIntervalMs": 1000
+  "telemetryIntervalMs": 1000,
+  "telemetryMaxAgeMs": 30000
 }
 ```
+
+`telemetryMaxAgeMs` is the maximum accepted measurement age and the freshness limit for V2V range calculations. It can be configured with `TELEMETRY_MAX_AGE_MS`.
 
 ### `GET /api/database/status`
 
@@ -122,6 +146,7 @@ Response `200` when none are connected:
 ```
 
 Each live vehicle entry contains `vehicleId`, `position`, `speed`, `heading`, `acceleration`, `braking`, and `lastSeen`. Before its first telemetry message, `position` is `null` and the numeric/status values are defaults.
+After its first telemetry message, entries also include optional `accuracy` (horizontal uncertainty in meters) and `measurementTimestamp` (the GPS measurement time in epoch milliseconds). `lastSeen` remains the server receipt time.
 
 ### `GET /api/vehicles/:vehicleId`
 
@@ -138,7 +163,7 @@ Error `404`:
 }
 ```
 
-**Implementation note:** the current route returns the internal vehicle object, which includes its WebSocket object. Frontend code should not depend on that internal field; this response should be changed to return explicit public vehicle fields before production use.
+**Implementation note:** this route returns the internal vehicle object, including its WebSocket object. Do not use it in Flutter. Prefer `GET /api/vehicles/:vehicleId/state`, which returns explicit public fields.
 
 ### `GET /api/vehicles/:vehicleId/state`
 
@@ -154,6 +179,8 @@ Response `200`:
     "latitude": 37.7749,
     "longitude": -122.4194
   },
+  "accuracy": 5,
+  "measurementTimestamp": 1790967223215,
   "speed": 45,
   "heading": 90,
   "acceleration": 1.2,
@@ -198,6 +225,8 @@ Response `200`:
       "timestamp": "2026-10-03T12:00:00.000Z",
       "latitude": 37.7749,
       "longitude": -122.4194,
+      "accuracy": 5,
+      "sequence": 105,
       "speed": 45,
       "heading": 90,
       "acceleration": 1.2,
@@ -231,7 +260,7 @@ Response `200`:
 }
 ```
 
-Thrown errors return `400`. Coordinates should be numeric degrees: latitude `-90..90`, longitude `-180..180`. The current route does not validate these ranges or required fields; malformed values may produce `null`/non-finite results instead of a clean `400`.
+Thrown errors return `400`. Both positions are required, and latitude/longitude must be finite numeric degrees within `-90..90` and `-180..180`. Invalid coordinates return `{"success":false,"error":"Both positions must contain valid latitude and longitude"}`.
 
 ### `POST /api/v2v/range`
 
@@ -247,7 +276,7 @@ Response `200`:
 }
 ```
 
-Thrown errors return `400`. It has the same coordinate-validation limitation as the distance route.
+Thrown errors return `400`. It uses the same coordinate validation as the distance route.
 
 ### `GET /api/v2v/nearby/:vehicleId`
 
@@ -272,7 +301,7 @@ Response `200`:
 }
 ```
 
-Errors: `404` if the source is not connected; `400` for a calculation error. A connected source without a position gets an empty `nearbyVehicles` list.
+Errors: `404` if the source is not connected; `400` for a calculation error. A connected source without a position or with a stale position gets an empty `nearbyVehicles` list. Stale targets are omitted. Results include only connected vehicles and the configured range is read from `V2V_RANGE_METERS`.
 
 ### `GET /api/events`
 
@@ -340,14 +369,55 @@ Send after connecting that vehicle ID:
   "type": "telemetry",
   "vehicleId": "CAR_01",
   "position": { "latitude": 37.7749, "longitude": -122.4194 },
+  "accuracy": 5.0,
+  "timestamp": 1790967223215,
+  "sequence": 105,
   "motion": { "speed": 45, "heading": 90, "acceleration": 1.2 },
   "status": { "braking": false }
 }
 ```
 
-Valid latitude and longitude are numeric and within `-90..90` and `-180..180`; speed must be a nonnegative number. Missing speed, heading, acceleration, or braking defaults to `0`, `0`, `0`, and `false`. Valid telemetry is saved to MongoDB and updates in-memory state. There is no success acknowledgment. If another connected vehicle is in range, it receives a `v2v_telemetry` frame with source vehicle, distance, position, motion, and status.
+Valid latitude and longitude must be finite numbers within `-90..90` and `-180..180`. `accuracy` is optional and, when supplied, must be a nonnegative number. `timestamp` is optional epoch milliseconds for when the GPS measurement was taken; if omitted, the server uses its receipt time. A supplied timestamp more than `telemetryMaxAgeMs` old or that far in the future is rejected. `sequence` is an optional nonnegative integer; when supplied, it must increase for that connection. Older timestamps are rejected so delayed messages cannot roll live state backward.
+
+Speed must be a finite, nonnegative number; heading must be in `[0, 360)` and acceleration finite. Missing speed, heading, acceleration, or braking defaults to `0`, `0`, `0`, and `false`. Only the vehicle ID bound to the WebSocket connection may send its telemetry. Valid telemetry is saved to MongoDB and updates in-memory state. There is no success acknowledgment. If another connected vehicle has a fresh position and is in range, it receives a `v2v_telemetry` frame with source vehicle, unrounded `distance`/`distanceMeters`, server `timestamp`, GPS `measurementTimestamp`, optional `accuracy`, position, motion, and status.
+
+`accuracy` reports the phone's GPS uncertainty; it does not improve the coordinates. Distance remains a calculation from the supplied GPS positions, so poor phone GPS or inaccurate timestamps still produce inaccurate physical estimates. For better measurements, the client must request high-accuracy location updates and send the provider's accuracy and measurement timestamp.
 
 Validation/processing failures return `{"type":"error","message":"..."}`. Telemetry from a vehicle that has not connected returns `Vehicle is not connected`.
+
+Server validation details:
+
+- `position.latitude` and `position.longitude` must be finite numbers in their geographic ranges.
+- `accuracy` is optional and, if provided, must be a finite nonnegative number in meters.
+- `timestamp` is optional and, if provided, must be a nonnegative epoch-millisecond integer. It must be within `telemetryMaxAgeMs` of server time.
+- `sequence` is optional and, if provided, must be a nonnegative integer greater than the sequence on the immediately previous accepted telemetry message. If a message omits `sequence`, the stored sequence is cleared; send it on every telemetry message if you want this check to remain effective.
+- `motion.speed` must be finite and nonnegative; `motion.heading` must be in `[0, 360)`; `motion.acceleration` must be finite.
+- `status.braking` must be a boolean.
+- Missing speed, heading, acceleration, and braking default to `0`, `0`, `0`, and `false`.
+- Telemetry for a vehicle ID different from the one connected on this WebSocket is rejected.
+
+Note: the backend uses `timestamp` for ordering and freshness, but its proximity freshness check uses the timestamp of the GPS measurement. Keep device clocks reasonably synchronized, or omit `timestamp` and let the server use its receive time.
+
+### Receive nearby telemetry
+
+A connected target vehicle receives this frame when another vehicle's accepted telemetry is processed and both positions are fresh and within the configured range:
+
+```json
+{
+  "type": "v2v_telemetry",
+  "sourceVehicle": "CAR_02",
+  "distance": 11.119492664034915,
+  "distanceMeters": 11.119492664034915,
+  "timestamp": 1790967223220,
+  "measurementTimestamp": 1790967223215,
+  "accuracy": 5.0,
+  "position": { "latitude": 37.775, "longitude": -122.4194 },
+  "motion": { "speed": 30, "heading": 180, "acceleration": 0.2 },
+  "status": { "braking": false }
+}
+```
+
+`timestamp` is when the backend created the outgoing frame; `measurementTimestamp` is when the source phone says it measured that location. The distance is calculated between the source and receiving vehicle's last positions. `accuracy` is the source location's optional reported GPS accuracy. No V2V frame is sent back to the source as an acknowledgment.
 
 ### Send an event
 
@@ -362,6 +432,8 @@ Validation/processing failures return `{"type":"error","message":"..."}`. Teleme
 ```
 
 The server persists the event but sends no success acknowledgment. Verify using `GET /api/events/CAR_01`. `vehicleId` and `eventType` are required by the database schema; persistence failures are returned as an error frame.
+
+Event messages must use the vehicle ID connected on that WebSocket. `timestamp`, `position`, and `data` are optional. The backend does not currently validate an event timestamp or coordinate range.
 
 ### Heartbeat
 
@@ -384,3 +456,6 @@ Unknown message types and malformed JSON return an error frame with `type: "erro
 - Event submissions are not deduplicated; every valid event frame creates a new record.
 - The API currently has no pagination parameters; history endpoints return at most 100 records.
 - Error response formats vary by endpoint, so clients should handle both HTTP errors and JSON `error` values.
+- `GET /api/status` and `GET /api/vehicles` describe active in-memory WebSocket connections, not all registered vehicles.
+- `GET /api/vehicles/:vehicleId/telemetry`, `GET /api/events`, and `GET /api/events/:vehicleId` are MongoDB-backed history endpoints.
+- No authentication or authorization is implemented. Do not expose the service publicly for sensitive or safety-critical use without adding appropriate security controls.

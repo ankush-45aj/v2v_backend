@@ -10,5 +10,8 @@ export const config = {
     v2vRangeMeters: Number(process.env.V2V_RANGE_METERS) || 1000,
 
     telemetryIntervalMs:
-        Number(process.env.TELEMETRY_INTERVAL_MS) || 1000
+        Number(process.env.TELEMETRY_INTERVAL_MS) || 1000,
+
+    telemetryMaxAgeMs:
+        Number(process.env.TELEMETRY_MAX_AGE_MS) || 30000
 };

@@ -4,19 +4,24 @@ import Event from "../database/eventModel.js";
 
 export async function handleMessage(
     data,
-    socket
+    socket,
+    vehicleId
 ) {
 
     switch (data.type) {
 
         case "telemetry":
 
-            await processTelemetry(data);
+            await processTelemetry(data, vehicleId);
 
             break;
 
 
         case "event":
+
+            if (!vehicleId || data.vehicleId !== vehicleId) {
+                throw new Error("vehicleId does not match the connected vehicle");
+            }
 
             await processEvent(data);
 

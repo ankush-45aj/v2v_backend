@@ -17,11 +17,14 @@ export function routeTelemetry(sourceVehicle) {
 
             sourceVehicle: sourceVehicle.vehicleId,
 
-            distance: Math.round(nearby.distance),
+            distance: nearby.distance,
+            distanceMeters: nearby.distance,
 
             timestamp: Date.now(),
+            measurementTimestamp: sourceVehicle.measurementTimestamp,
+            accuracy: sourceVehicle.accuracy,
 
-            position: sourceVehicle.position,
+            position: { ...sourceVehicle.position },
 
             motion: {
                 speed: sourceVehicle.speed,

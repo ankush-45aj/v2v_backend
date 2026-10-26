@@ -5,6 +5,10 @@ export class VehicleState {
 
         this.position = null;
 
+        this.accuracy = null;
+        this.measurementTimestamp = null;
+        this.sequence = null;
+
         this.speed = 0;
         this.heading = 0;
         this.acceleration = 0;
@@ -14,8 +18,11 @@ export class VehicleState {
         this.lastSeen = Date.now();
     }
 
-    updateTelemetry(data) {
-        this.position = data.position;
+    updateTelemetry(data, timestamp) {
+        this.position = { ...data.position };
+        this.accuracy = data.accuracy ?? null;
+        this.measurementTimestamp = timestamp;
+        this.sequence = data.sequence ?? null;
 
         this.speed = data.motion?.speed ?? 0;
         this.heading = data.motion?.heading ?? 0;
